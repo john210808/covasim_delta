@@ -1,4 +1,3 @@
-%% Figure 2 %%%
 classdef TTI < handle
     properties       
         params = [];
@@ -34,10 +33,14 @@ classdef TTI < handle
             params.nu = 0.1;          % Isolation factor (traced)
             params.epsilon = 0.1;     % Missed contacts (traced) 
         end
+        
+        function r = Run(eta)
+            TTI(eta).calc().doPlot();
+        end
     end 
     
     methods   
-       function this = TTI()
+       function this = TTI(eta)
             dt = 0.005;
 
             p1 = TTI.baseParams;
@@ -49,7 +52,7 @@ classdef TTI < handle
             p2 = TTI.baseParams;
             p2.id = 2;
             p2.t = 0:dt:120;
-            p2.eta = 0.66;
+            p2.eta = eta; % 0.66 or 0.33
             p2.lambda_s = 0.1;
            
             this.params = [p1 p2];
@@ -85,7 +88,7 @@ classdef TTI < handle
             x = [dT; dH; dHs];
         end
         
-        function calc(this)
+        function this = calc(this)
             X = [];
             for j = 1:length(this.params)
                 this.p = this.params(j);
@@ -140,7 +143,7 @@ classdef TTI < handle
             T = t(idx);
             this.N_hat = this.N_hat(idx);
             this.N_sum = this.N_sum(idx);
-            r = 0
+%             r = 0
 
             %% Calculo de los casos nuevos por d?a
 
