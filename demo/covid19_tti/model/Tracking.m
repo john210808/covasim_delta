@@ -1,32 +1,30 @@
 classdef Tracking
     properties
-        %% Timeframe and initial conditions
-        ti = [-40 0];
-        tf = [0 120];
-        tmax;
-        tmin = -20;
-        x0 = [0 20 0];
-        dt = 0.005;
-        
         % Default 
-        xi= 0.15; 
-        varphi = 0.2;
-        eta_sc = 0.66;
-        lambda_s = [0 0.1];
-        Rt = 1.8;
+        Rt = 1.8;          % Reproduction number (hidden)
         Rtlim = 2;
+        
+        Gamma = 0.1;       % Recovery rate
+        Phi = 15;          % Influx rate (hidden)
+        xi= 0.15;          % Asymptomatic ratio
+        
+        varphi = 0.2;      % Fraction skipping testing
+        lambda_s = [0 0.1];% symptom-driven testing rate
+        lambda_r = 0;      % random-testing rate
+        
+        nmax = 1e9;        % Limitless tracing
+        eta_sc = 0.66;     % Tracing efficiency
         eta;
-        % xi; 
+        nu = 0.1;          % Isolation factor (traced)
+        epsilon = 0.1;     % Missed contacts (traced)
+        
+       
         xim;
-        Gamma = 0.1;
-        nu = 0.1;
-        epsilon = 0.1;
-        lambda_r = 0;
-        Phi = 15;
         rt;
-        nmax = 1e9;                     % Limitless tracing
         kmax;
         
+        
+        t, tmax, tmin, x0;
 %         str = cell(1,kmax);
 %         t = ti(1):dt:tf(end);
 %         Xs = cell(kmax,1);
@@ -40,12 +38,95 @@ classdef Tracking
     end
     methods
         function o = Tracking()
-            o.tmax = o.tf(end);
+            %% Timeframe and initial conditions
+            ti = [-40 0];  
+            tf = [0 120];
+            dt = 0.005;
+            o.t = ti:dt:tf;
+            o.x0 = [0 20 0];  % T, H, Hs
+            o.xim = 1-o.xi;   % non-asymptomatic ratio
+            
+            
+            o.tmin = -20;
+            o.tmax = tf(end);
+            
             o.eta = [0 o.eta_sc];
             o.xi = o.xi + (1-o.xi)*o.varphi; 
-            o.xim = 1-o.xi;
             o.rt = [o.Rt o.Rt];
-            o.kmax = length(o.ti);
+            o.kmax = length(ti);
+        end
+        
+        % solve differential equations
+        function x = doSolve(o, j)
+            ts = o.ti:o.dt:o.tf;
+            [~,x] = ode45(@(t,x) o.doSolve0(j, t, x), ts, o.x0);
+            x = x';
+        end
+        
+        % autonomous differential equation, t is not used.
+        function F = doSolve0(o, j, t, x)
+            T = x(1)
+            H = x(2)
+            Hs = x(3)
+           
+            % tracing
+            ne = o.eta(j)*o.Rt*(o.lambda_s(j)*Hs + o.lambda_r*H); 
+            if ne >= o.nmax
+                ne = o.nmax;
+            end
+            
+            % differential equations, 
+            dT = o.Gamma*(o.nu*o.Rt-1)*T + o.lambda_s(j)*Hs + o.lambda_r*H + ne;
+            dH = o.Gamma*(o.Rt-1)*H - (o.lambda_s(j)*Hs + o.lambda_r*H) - ne + o.Gamma*o.epsilon*o.Rt*T + o.Phi;
+            dHs = o.xim*o.Gamma*o.Rt*H - o.Gamma*Hs - (o.lambda_s(j)+o.lambda_r)*Hs + o.xim*(-ne + o.Gamma*o.epsilon*o.Rt*T + o.Phi);
+            
+            F = zeros(3,1); 
+            F = [dT; dH; dHs]
+        end
+        
+        function r = calc(o)
+            X = [];
+            for j = 1:length(o.ti)
+                if j>1
+                    x0 = X(:,end)'; X(:,end)=[];
+                end
+                x = o.doSolve(j);
+                if j>1
+                    o.N_hat = [o.N_hat(1:end-1) ; o.newInfections(x, j)];
+                    o.N_sum = [o.N_sum(1:end-1) ; o.newInfections_Total(x, j)];
+                else
+                    o.N_hat = o.newInfections(x, j);
+                    o.N_sum = o.newInfections_Total(x, j);
+                end
+                X = [X x];
+            end
+            r = X;    
+        end
+        
+        function N = newInfections(o, x, j)
+            % obs X = [TSum HSum Hs];
+            T = x(1,:);
+            Ht = x(2,:);
+            Hs = x(3,:);
+            nbt0 = o.eta(j)*(o.lambda_s(j)*o.Rt*Hs + o.lambda_r*o.Rt*Ht);
+            ne = zeros(size(T));
+            for i = 1:length(nbt0)
+                ne(i) = min(o.nmax,nbt0(i));
+            end
+            N = o.nu*o.Gamma*o.Rt*T + o.lambda_s(j)*Hs + o.lambda_r*Ht + ne;
+            N = N';
+        end
+        
+        function N = newInfections_Total(o, x, j)
+            % obs X = [TSum HSum Hs];
+            T = x(1,:);
+            Ht = x(2,:);
+            if length(o.Phi)>1
+                N = (o.nu+o.epsilon)*o.Gamma*o.Rt*T + o.Gamma*o.Rt*Ht + o.Phi;
+            else
+                N = (o.nu+o.epsilon)*o.Gamma*o.Rt*T + o.Gamma*o.Rt*Ht + o.Phi;
+            end
+            N = N';
         end
         
         function r = doPlot()
@@ -109,52 +190,7 @@ classdef Tracking
             xlim([tmin tmax])
             ylim([0 ylimsupI])
             hold on
-
         end
         
-        function r = calc(o)
-            X = [];
-            for j = 1:length(o.ti)
-                if j>1
-                    x0 = X(:,end)'; X(:,end)=[];
-                end
-                x = Solver.solver_por_tramos(o, j);
-                if j>1
-                    o.N_hat = [o.N_hat(1:end-1) ; o.newInfections(x, j)];
-                    o.N_sum = [o.N_sum(1:end-1) ; o.newInfections_Total(x, j)];
-                else
-                    o.N_hat = o.newInfections(x, j);
-                    o.N_sum = o.newInfections_Total(x, j);
-                end
-                X = [X x];
-            end
-            r = X;    
-        end
-        
-        function N = newInfections(o, x, j)
-            % obs X = [TSum HSum Hs];
-            T = x(1,:);
-            Ht = x(2,:);
-            Hs = x(3,:);
-            nbt0 = o.eta(j)*(o.lambda_s(j)*o.Rt*Hs + o.lambda_r*o.Rt*Ht);
-            ne = zeros(size(T));
-            for i = 1:length(nbt0)
-                ne(i) = min(o.nmax,nbt0(i));
-            end
-            N = o.nu*o.Gamma*o.Rt*T + o.lambda_s(j)*Hs + o.lambda_r*Ht + ne;
-            N = N';
-        end
-        
-        function N = newInfections_Total(o, x, j)
-            % obs X = [TSum HSum Hs];
-            T = x(1,:);
-            Ht = x(2,:);
-            if length(o.Phi)>1
-                N = (o.nu+o.epsilon)*o.Gamma*o.Rt*T + o.Gamma*o.Rt*Ht + o.Phi;
-            else
-                N = (o.nu+o.epsilon)*o.Gamma*o.Rt*T + o.Gamma*o.Rt*Ht + o.Phi;
-            end
-            N = N';
-        end
     end
 end
